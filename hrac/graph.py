@@ -92,6 +92,7 @@ class Graph:
     def compute_loss(self):
         loss = 0
         normalized_adj = self.normalize_adj_matrix()
+
         for u in range(self.num_nodes):
             for v in range(self.num_nodes):
                 if not np.all(self.nodes[u] == 0) and not np.all(self.nodes[v] == 0):

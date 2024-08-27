@@ -58,9 +58,10 @@ if __name__ == "__main__":
     parser.add_argument("--man_noise_sigma", default=1., type=float)
     
     # Graph Hyperparameter
-    parser.add_argument('--num_nodes', default=50, type=int)
-    parser.add_argument('--epsilon_d', default=1.5, type=float)
-    parser.add_argument('--beta', default=0.9, type=float)
+    parser.add_argument('--num_nodes', default=40, type=int)
+    parser.add_argument('--epsilon_d', default=2.0, type=float)
+    parser.add_argument('--beta_low', default=0.05, type=float)
+    parser.add_argument('--beta_high', default=0.05, type=float)
 
     # Run the algorithm
     args = parser.parse_args()

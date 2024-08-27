@@ -15,6 +15,7 @@ from envs import EnvWithGoal, GatherEnv
 from envs.create_maze_env import create_maze_env
 from envs.create_gather_env import create_gather_env
 
+from hrac.graph import *
 
 """
 HIRO part adapted from
@@ -179,10 +180,11 @@ def run_hrac(args):
     noise_clip = 0.5
     high = -low
     man_scale = (high - low) / 2
+    # TODO: Change to 15, subgoal dimension
     if args.env_name == "AntFall":
-        controller_goal_dim = 3
+        controller_goal_dim = 15
     else:
-        controller_goal_dim = 2
+        controller_goal_dim = 15
     if args.absolute_goal:
         man_scale[0] = 30
         man_scale[1] = 30
@@ -260,12 +262,20 @@ def run_hrac(args):
     state_dict = {}
     adj_mat = np.diag(np.ones(1500, dtype=np.uint8))
     traj_buffer = utils.TrajectoryBuffer(capacity=args.traj_buffer_size)
+
     a_net = ANet(controller_goal_dim, args.r_hidden_dim, args.r_embedding_dim)
     if args.load_adj_net:
         print("Loading adjacency network...")
         a_net.load_state_dict(torch.load("./models/a_network.pth"))
     a_net.to(device)
     optimizer_r = optim.Adam(a_net.parameters(), lr=args.lr_r)
+
+    #TODO：Initialize Graph
+    graph = Graph(num_nodes=args.num_nodes, state_dim=controller_goal_dim, subgoal_dim=controller_goal_dim, epsilon_d=args.epsilon_d)
+    prev_node_index = None
+    beta_low = args.beta_low
+    beta_high = args.beta_high
+    graph_optimizer = optim.Adam(graph.encoder_decoder.encoder.parameters(), lr=0.001)
 
     if args.load:
         try:
@@ -288,6 +298,8 @@ def run_hrac(args):
     episode_num = 0
     done = True
     evaluations = []
+    
+    first_time = True
 
     # Train
     while total_timesteps < args.max_timesteps:
@@ -316,15 +328,21 @@ def run_hrac(args):
                         manager_buffer, ceil(episode_timesteps/args.train_manager_freq),
                         batch_size=args.man_batch_size, discount=args.man_discount, tau=args.man_soft_sync_rate,
                         a_net=a_net, r_margin=r_margin)
+
+
+                    graph_loss = graph.train_encoder_decoder(graph_optimizer)
                     
                     writer.add_scalar("data/manager_actor_loss", man_act_loss, total_timesteps)
                     writer.add_scalar("data/manager_critic_loss", man_crit_loss, total_timesteps)
                     writer.add_scalar("data/manager_goal_loss", man_goal_loss, total_timesteps)
+                    
+                    writer.add_scalar("data/graph_loss", graph_loss, total_timesteps)
 
                     if episode_num % 10 == 0:
                         print("Manager actor loss: {:.3f}".format(man_act_loss))
                         print("Manager critic loss: {:.3f}".format(man_crit_loss))
                         print("Manager goal loss: {:.3f}".format(man_goal_loss))
+                        print("Graph loss: {:.3f}".format(graph_loss))
 
                 # Evaluate
                 if timesteps_since_eval >= args.eval_freq:
@@ -372,6 +390,11 @@ def run_hrac(args):
             episode_num += 1
 
             subgoal = manager_policy.sample_goal(state, goal)
+            
+            if timesteps_since_manager == 0 or timesteps_since_manager >= args.train_manager_freq:
+                new_node_index = graph.add_node(state[:subgoal.shape[0]], prev_node_index)
+                prev_node_index = new_node_index
+                
             if not args.absolute_goal:
                 subgoal = man_noise.perturb_action(subgoal,
                     min_action=-man_scale[:controller_goal_dim], max_action=man_scale[:controller_goal_dim])
@@ -381,24 +404,44 @@ def run_hrac(args):
 
             timesteps_since_subgoal = 0
             manager_transition = [state, None, goal, subgoal, 0, False, [state], []]
-
+        
+            
         action = controller_policy.select_action(state, subgoal)
         action = ctrl_noise.perturb_action(action, -max_action, max_action)
         action_copy = action.copy()
 
         next_tup, manager_reward, done, _ = env.step(action_copy)
-
-        manager_transition[4] += manager_reward * args.man_rew_scale
-        manager_transition[-1].append(action)
-
+        
         next_goal = next_tup["desired_goal"]
         next_state = next_tup["observation"]
+        
+        # Compute Low graph reward
+        with torch.no_grad():
+            encoded_s = graph.encoder_decoder.encode(torch.tensor(state[:subgoal.shape[0]], dtype=torch.float32))
+            encoded_sg = graph.encoder_decoder.encode(torch.tensor(subgoal, dtype=torch.float32))
+            graph_low_reward = graph.encoder_decoder.decode(encoded_sg, encoded_s)
+            
+        # Compute High graph reward
+        
+        with torch.no_grad():
+            encoded_n_s = graph.encoder_decoder.encode(torch.tensor(next_state[:subgoal.shape[0]], dtype=torch.float32))
+            encoded_sg = graph.encoder_decoder.encode(torch.tensor(subgoal, dtype=torch.float32))
+            graph_high_reward = graph.encoder_decoder.decode(encoded_sg, encoded_n_s)
 
+
+        manager_transition[4] += manager_reward * args.man_rew_scale
+        #TODO: Add high reward
+        manager_transition[4] -= graph_high_reward * beta_high
+        
+        manager_transition[-1].append(action)
+  
         manager_transition[-2].append(next_state)
         traj_buffer.append(next_state)
 
         controller_reward = calculate_controller_reward(state, subgoal, next_state, args.ctrl_rew_scale)
         subgoal = controller_policy.subgoal_transition(state, subgoal, next_state)
+        
+        controller_reward += graph_low_reward  * beta_low
 
         controller_goal = subgoal
         episode_reward += controller_reward
@@ -419,6 +462,8 @@ def run_hrac(args):
         timesteps_since_eval += 1
         timesteps_since_manager += 1
         timesteps_since_subgoal += 1
+        
+
 
         if timesteps_since_subgoal % args.manager_propose_freq == 0:
             manager_transition[1] = state
