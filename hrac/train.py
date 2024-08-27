@@ -182,9 +182,9 @@ def run_hrac(args):
     man_scale = (high - low) / 2
     # TODO: Change to 15, subgoal dimension
     if args.env_name == "AntFall":
-        controller_goal_dim = 15
+        controller_goal_dim = 2
     else:
-        controller_goal_dim = 15
+        controller_goal_dim = 2
     if args.absolute_goal:
         man_scale[0] = 30
         man_scale[1] = 30
