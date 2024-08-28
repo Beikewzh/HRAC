@@ -48,17 +48,20 @@ class Graph:
 #        new_state_feature = self.encoder_decoder.encode(new_state_tensor).detach().numpy()
         self.history = self.history + 1
 
+        min_dis = np.linalg.norm(new_state - self.nodes[0])
+        min_index = 0
         for i, node in enumerate(self.nodes):
             if not np.all(node == 0):
-#                node_tensor = torch.tensor(node, dtype=torch.float32)
-#                node_feature = self.encoder_decoder.encode(node_tensor).detach().numpy()
-#                if np.linalg.norm(new_state_feature - node_feature) <= self.epsilon_d:
-                if np.linalg.norm(new_state - node) <= self.epsilon_d:
-                    if (i != prev_state_index) and (prev_state_index is not None):
-                        self.adj_matrix[i, prev_state_index] += 1
-                        self.adj_matrix[prev_state_index, i] += 1
-                    self.history[i] = 0
-                    return i  # State is already represented in the graph
+                if np.linalg.norm(new_state - node) <= min_dis:
+                    min_index = i
+                    min_dis = np.linalg.norm(new_state - node)
+                
+        if min_dis <= self.epsilon_d:
+            if (i != prev_state_index) and (prev_state_index is not None):
+                self.adj_matrix[i, prev_state_index] += 1
+                self.adj_matrix[prev_state_index, i] += 1
+            self.history[i] = 0
+            return i  # State is already represented in the graph
 
         new_node_index = self.find_empty_node()
         if new_node_index is not None:

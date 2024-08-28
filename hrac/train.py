@@ -182,7 +182,7 @@ def run_hrac(args):
     man_scale = (high - low) / 2
     # TODO: Change to 15, subgoal dimension
     if args.env_name == "AntFall":
-        controller_goal_dim = 2
+        controller_goal_dim = 3
     else:
         controller_goal_dim = 2
     if args.absolute_goal:
@@ -391,7 +391,7 @@ def run_hrac(args):
 
             subgoal = manager_policy.sample_goal(state, goal)
             
-            if timesteps_since_manager == 0 or timesteps_since_manager >= args.train_manager_freq:
+            if total_timesteps % args.train_manager_freq == 0:
                 new_node_index = graph.add_node(state[:subgoal.shape[0]], prev_node_index)
                 prev_node_index = new_node_index
                 
